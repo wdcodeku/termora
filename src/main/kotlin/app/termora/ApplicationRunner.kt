@@ -359,13 +359,10 @@ class ApplicationRunner {
     }
 
     /**
-     * 统计 https://mixpanel.com
+     * 已本地化：移除启动统计上报。
      */
     private fun enableAnalytics() {
-        if (Application.isUnknownVersion()) {
-            return
-        }
-        MixpanelService.getInstance().push("launch")
+        // no-op
     }
 
 

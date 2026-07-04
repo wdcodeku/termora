@@ -44,6 +44,9 @@ public class UiSettings {
     public static final int CHANGED_SCALE_FACTOR = 1 << 0;
     public static final int CHANGED_MOUSE_CURSOR_SHAPE = 1 << 1;
     public static final int CHANGED_FULL_SCREEN = 1 << 2;
+    public static final int CHANGED_RESOLUTION_OPTIMIZATION = 1 << 3;
+    public static final int CHANGED_AUTO_RECONNECT = 1 << 4;
+    public static final int CHANGED_SAVE_CREDENTIALS = 1 << 5;
 
     private final List<IChangeSettingsListener> listeners = new CopyOnWriteArrayList<IChangeSettingsListener>();
     private int changedSettingsMask = 0;
@@ -59,7 +62,8 @@ public class UiSettings {
 
 	public UiSettings(UiSettings uiSettings) {
         uiSettingsData = new UiSettingsData(
-                uiSettings.getScalePercent(), uiSettings.getMouseCursorShape(), uiSettings.isFullScreen());
+                uiSettings.getScalePercent(), uiSettings.getMouseCursorShape(), uiSettings.isFullScreen(),
+                uiSettings.getResolutionOptimization(), uiSettings.isAutoReconnect(), uiSettings.isSaveCredentials());
         this.changedSettingsMask = uiSettings.changedSettingsMask;
     }
 
@@ -160,6 +164,9 @@ public class UiSettings {
         if ((mask & CHANGED_SCALE_FACTOR) == 0) uiSettingsData.setScalePercent(other.getScalePercent());
         if ((mask & CHANGED_MOUSE_CURSOR_SHAPE) == 0) uiSettingsData.setMouseCursorShape(other.getMouseCursorShape());
         if ((mask & CHANGED_FULL_SCREEN) == 0) uiSettingsData.setFullScreen(other.isFullScreen());
+        if ((mask & CHANGED_RESOLUTION_OPTIMIZATION) == 0) uiSettingsData.setResolutionOptimization(other.getResolutionOptimization());
+        if ((mask & CHANGED_AUTO_RECONNECT) == 0) uiSettingsData.setAutoReconnect(other.isAutoReconnect());
+        if ((mask & CHANGED_SAVE_CREDENTIALS) == 0) uiSettingsData.setSaveCredentials(other.isSaveCredentials());
     }
 
     public void setFullScreen(boolean isFullScreen) {
@@ -172,6 +179,39 @@ public class UiSettings {
     public boolean isFullScreen() {
         return uiSettingsData.isFullScreen();
     }
+    
+    public String getResolutionOptimization() {
+        return uiSettingsData.getResolutionOptimization();
+    }
+    
+    public void setResolutionOptimization(String resolutionOptimization) {
+        if (uiSettingsData.setResolutionOptimization(resolutionOptimization)) {
+            changedSettingsMask |= CHANGED_RESOLUTION_OPTIMIZATION;
+            fireListeners();
+        }
+    }
+    
+    public boolean isAutoReconnect() {
+        return uiSettingsData.isAutoReconnect();
+    }
+    
+    public void setAutoReconnect(boolean autoReconnect) {
+        if (uiSettingsData.setAutoReconnect(autoReconnect)) {
+            changedSettingsMask |= CHANGED_AUTO_RECONNECT;
+            fireListeners();
+        }
+    }
+    
+    public boolean isSaveCredentials() {
+        return uiSettingsData.isSaveCredentials();
+    }
+    
+    public void setSaveCredentials(boolean saveCredentials) {
+        if (uiSettingsData.setSaveCredentials(saveCredentials)) {
+            changedSettingsMask |= CHANGED_SAVE_CREDENTIALS;
+            fireListeners();
+        }
+    }
 
     public UiSettingsData getData() {
         return uiSettingsData;
@@ -183,6 +223,9 @@ public class UiSettings {
                 "scalePercent=" + uiSettingsData.getScalePercent() +
                 ", fullScreen=" + uiSettingsData.isFullScreen() +
                 ", mouseCursorShape=" + uiSettingsData.getMouseCursorShape() +
+                ", resolutionOptimization='" + uiSettingsData.getResolutionOptimization() + '\'' +
+                ", autoReconnect=" + uiSettingsData.isAutoReconnect() +
+                ", saveCredentials=" + uiSettingsData.isSaveCredentials() +
                 '}';
     }
 

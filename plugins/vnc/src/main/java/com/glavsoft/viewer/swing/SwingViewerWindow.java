@@ -46,8 +46,10 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.AbstractAction;
 import javax.swing.border.BevelBorder;
 import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
@@ -142,7 +144,36 @@ public class SwingViewerWindow implements IChangeSettingsListener, MouseEnteredL
             switchOnFullscreenMode();
         }
         setSurfaceToHandleKbdFocus();
+        
+        // Add keyboard shortcuts for better remote desktop experience
+        addKeyboardShortcuts();
 	}
+    
+    private void addKeyboardShortcuts() {
+        // Add F11 for fullscreen toggle
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+            KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0), "toggleFullscreen");
+        surface.getActionMap().put("toggleFullscreen", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (zoomFullScreenButton != null && zoomFullScreenButton.isEnabled()) {
+                    zoomFullScreenButton.doClick();
+                }
+            }
+        });
+        
+        // Add Escape to exit fullscreen
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+            KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "exitFullscreen");
+        surface.getActionMap().put("exitFullscreen", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (isFullScreen && zoomFullScreenButton != null) {
+                    zoomFullScreenButton.doClick();
+                }
+            }
+        });
+    }
 
     private void createContainer(final Surface surface, Container externalContainer) {
 		lpane = new JLayeredPane() {

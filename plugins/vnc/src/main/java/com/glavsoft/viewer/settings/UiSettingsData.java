@@ -33,22 +33,42 @@ public class UiSettingsData implements Serializable {
     private double scalePercent;
     private LocalMouseCursorShape mouseCursorShape;
     private boolean fullScreen;
+    private String resolutionOptimization; // "auto", "native", "fit", "stretch"
+    private boolean autoReconnect;
+    private boolean saveCredentials;
 
 
     public UiSettingsData() {
         scalePercent = 100;
         mouseCursorShape = LocalMouseCursorShape.DOT;
         fullScreen = false;
+        resolutionOptimization = "auto";
+        autoReconnect = false;
+        saveCredentials = false;
     }
 
     public UiSettingsData(double scalePercent, LocalMouseCursorShape mouseCursorShape, boolean fullScreen) {
         this.scalePercent = scalePercent;
         this.mouseCursorShape = mouseCursorShape;
         this.fullScreen = fullScreen;
+        this.resolutionOptimization = "auto";
+        this.autoReconnect = false;
+        this.saveCredentials = false;
+    }
+
+    public UiSettingsData(double scalePercent, LocalMouseCursorShape mouseCursorShape, boolean fullScreen,
+                         String resolutionOptimization, boolean autoReconnect, boolean saveCredentials) {
+        this.scalePercent = scalePercent;
+        this.mouseCursorShape = mouseCursorShape;
+        this.fullScreen = fullScreen;
+        this.resolutionOptimization = resolutionOptimization;
+        this.autoReconnect = autoReconnect;
+        this.saveCredentials = saveCredentials;
     }
 
     public UiSettingsData(UiSettingsData other) {
-        this(other.getScalePercent(), other.getMouseCursorShape(), other.isFullScreen());
+        this(other.getScalePercent(), other.getMouseCursorShape(), other.isFullScreen(),
+             other.getResolutionOptimization(), other.isAutoReconnect(), other.isSaveCredentials());
     }
 
     public double getScalePercent() {
@@ -87,6 +107,42 @@ public class UiSettingsData implements Serializable {
         }
         return false;
     }
+    
+    public String getResolutionOptimization() {
+        return resolutionOptimization;
+    }
+    
+    public boolean setResolutionOptimization(String resolutionOptimization) {
+        if (this.resolutionOptimization == null || !this.resolutionOptimization.equals(resolutionOptimization)) {
+            this.resolutionOptimization = resolutionOptimization;
+            return true;
+        }
+        return false;
+    }
+    
+    public boolean isAutoReconnect() {
+        return autoReconnect;
+    }
+    
+    public boolean setAutoReconnect(boolean autoReconnect) {
+        if (this.autoReconnect != autoReconnect) {
+            this.autoReconnect = autoReconnect;
+            return true;
+        }
+        return false;
+    }
+    
+    public boolean isSaveCredentials() {
+        return saveCredentials;
+    }
+    
+    public boolean setSaveCredentials(boolean saveCredentials) {
+        if (this.saveCredentials != saveCredentials) {
+            this.saveCredentials = saveCredentials;
+            return true;
+        }
+        return false;
+    }
 
     @Override
     public String toString() {
@@ -94,6 +150,9 @@ public class UiSettingsData implements Serializable {
                 "scalePercent=" + scalePercent +
                 ", mouseCursorShape=" + mouseCursorShape +
                 ", fullScreen=" + fullScreen +
+                ", resolutionOptimization='" + resolutionOptimization + '\'' +
+                ", autoReconnect=" + autoReconnect +
+                ", saveCredentials=" + saveCredentials +
                 '}';
     }
 }

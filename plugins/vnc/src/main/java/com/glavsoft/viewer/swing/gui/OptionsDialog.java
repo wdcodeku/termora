@@ -83,6 +83,11 @@ public class OptionsDialog extends JDialog {
 	private JComboBox<ColorDepthSelectItem> colorDepth;
     private RadioButtonSelectedState<LocalMouseCursorShape> mouseCursorShapeSelected;
     private HashMap<LocalMouseCursorShape, JRadioButton> mouseCursorShapeMap;
+    
+    // New UI components for enhanced features
+    private JComboBox<ResolutionOptimizationSelectItem> resolutionOptimization;
+    private JCheckBox autoReconnectCheckBox;
+    private JCheckBox saveCredentialsCheckBox;
 
     public OptionsDialog(Window owner) {
 		super(owner, "Connection Options", ModalityType.DOCUMENT_MODAL);
@@ -158,6 +163,24 @@ public class OptionsDialog extends JDialog {
 
 		allowCopyRect.setSelected(settings.isAllowCopyRect());
 		disableClipboardTransfer.setSelected( ! settings.isAllowClipboardTransfer());
+        
+        // Initialize new settings
+        i = 0; boolean isNotSetResolution = true;
+        while (resolutionOptimization.getItemAt(i) != null) {
+            String itemValue = resolutionOptimization.getItemAt(i).value;
+            if (itemValue.equals(uiSettings.getResolutionOptimization())) {
+                resolutionOptimization.setSelectedIndex(i);
+                isNotSetResolution = false;
+                break;
+            }
+            ++i;
+        }
+        if (isNotSetResolution) {
+            resolutionOptimization.setSelectedItem(0);
+        }
+        
+        autoReconnectCheckBox.setSelected(uiSettings.isAutoReconnect());
+        saveCredentialsCheckBox.setSelected(uiSettings.isSaveCredentials());
 }
 
 	private void setSettingsFromControls() {
@@ -178,7 +201,14 @@ public class OptionsDialog extends JDialog {
 				- Math.abs(settings.getJpegQuality()));
 		settings.setAllowCopyRect(allowCopyRect.isSelected());
 		settings.setAllowClipboardTransfer( ! disableClipboardTransfer.isSelected());
-		settings.fireListeners();
+        
+        // Set new settings
+        uiSettings.setResolutionOptimization(((ResolutionOptimizationSelectItem) resolutionOptimization.getSelectedItem()).value);
+        uiSettings.setAutoReconnect(autoReconnectCheckBox.isSelected());
+        uiSettings.setSaveCredentials(saveCredentialsCheckBox.isSelected());
+        
+        settings.fireListeners();
+        uiSettings.fireListeners();
 	}
 
 	private Component createLeftPane() {
@@ -198,6 +228,7 @@ public class OptionsDialog extends JDialog {
 		box.add(createRestrictionsPanel());
 		box.add(createMouseCursorPanel());
 		box.add(createLocalShapePanel());
+        box.add(createEnhancedFeaturesPanel());
 
 		sharedSession = new JCheckBox("Request shared session");
 		box.add(new JPanel(new FlowLayout(FlowLayout.LEFT)).add(sharedSession));
@@ -285,6 +316,19 @@ public class OptionsDialog extends JDialog {
 			return title;
 		}
 	}
+    
+    private static class ResolutionOptimizationSelectItem {
+        final String value;
+        final String title;
+        ResolutionOptimizationSelectItem(String value, String title) {
+            this.value = value;
+            this.title = title;
+        }
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
 
 	private JPanel createColorDepthPanel() {
 		JPanel colorDepthPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -493,6 +537,39 @@ public class OptionsDialog extends JDialog {
 		state2buttonMap.put(state, radio);
 		return radio;
 	}
+    
+    private JPanel createEnhancedFeaturesPanel() {
+        JPanel enhancedFeaturesPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        enhancedFeaturesPanel.setBorder(
+                BorderFactory.createTitledBorder(
+                        BorderFactory.createEtchedBorder(), "Enhanced Features"));
+        Box enhancedFeaturesBox = Box.createVerticalBox();
+        enhancedFeaturesPanel.add(enhancedFeaturesBox);
+        
+        // Resolution optimization
+        JPanel resolutionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        resolutionPanel.add(new JLabel("Resolution optimization: "));
+        
+        resolutionOptimization = new JComboBox<>();
+        resolutionOptimization.addItem(new ResolutionOptimizationSelectItem("auto", "Auto (recommended)"));
+        resolutionOptimization.addItem(new ResolutionOptimizationSelectItem("native", "Native resolution"));
+        resolutionOptimization.addItem(new ResolutionOptimizationSelectItem("fit", "Fit to window"));
+        resolutionOptimization.addItem(new ResolutionOptimizationSelectItem("stretch", "Stretch to window"));
+        resolutionPanel.add(resolutionOptimization);
+        enhancedFeaturesBox.add(resolutionPanel);
+        
+        // Auto reconnect
+        autoReconnectCheckBox = new JCheckBox("Auto-reconnect on disconnect");
+        autoReconnectCheckBox.setAlignmentX(LEFT_ALIGNMENT);
+        enhancedFeaturesBox.add(autoReconnectCheckBox);
+        
+        // Save credentials
+        saveCredentialsCheckBox = new JCheckBox("Save credentials (encrypted)");
+        saveCredentialsCheckBox.setAlignmentX(LEFT_ALIGNMENT);
+        enhancedFeaturesBox.add(saveCredentialsCheckBox);
+        
+        return enhancedFeaturesPanel;
+    }
 
 	private void addButtons(final WindowListener onClose) {
 		JPanel buttonPanel = new JPanel();

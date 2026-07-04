@@ -2,6 +2,7 @@
 build/
 data/
 dist/
+dist-output/
 certs/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/

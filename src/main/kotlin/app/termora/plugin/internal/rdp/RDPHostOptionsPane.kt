@@ -2,6 +2,7 @@ package app.termora.plugin.internal.rdp
 
 import app.termora.*
 import app.termora.account.AccountOwner
+import app.termora.database.DatabaseManager
 import app.termora.plugin.internal.BasicProxyOption
 import com.formdev.flatlaf.FlatClientProperties
 import com.formdev.flatlaf.extras.components.FlatComboBox
@@ -19,6 +20,13 @@ import java.awt.event.ItemEvent
 import javax.swing.*
 
 internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) : OptionsPane() {
+    companion object {
+        // 记住上次新增 RDP 时使用的显示模式与分辨率，作为下次新增的默认值
+        private const val PROP_DISPLAY_MODE = "RDP.default-display-mode"
+        private const val PROP_RESOLUTION = "RDP.default-resolution"
+    }
+
+    private val properties get() = DatabaseManager.getInstance().properties
     protected val generalOption = GeneralOption()
     protected val proxyOption = BasicProxyOption()
     protected val owner: Window get() = SwingUtilities.getWindowAncestor(this)
@@ -38,7 +46,12 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
         var authentication = Authentication.Companion.No
         var proxy = Proxy.Companion.No
         val authenticationType = generalOption.authenticationTypeComboBox.selectedItem as AuthenticationType
-        val desktop = generalOption.desktopTextField.text.trim()
+        val desktop = (generalOption.resolutionComboBox.editor.item?.toString() ?: "").trim()
+        val fullscreen = generalOption.displayModeComboBox.selectedIndex == 0
+
+        // 记住本次的显示模式与分辨率，作为下次新增 RDP 时的默认值
+        properties.putString(PROP_DISPLAY_MODE, if (fullscreen) "fullscreen" else "windowed")
+        properties.putString(PROP_RESOLUTION, desktop)
 
         if (authenticationType == AuthenticationType.Password) {
             authentication = authentication.copy(
@@ -69,7 +82,12 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
             proxy = proxy,
             sort = System.currentTimeMillis(),
             remark = generalOption.remarkTextArea.text,
-            options = Options.Default.copy(extras = mutableMapOf("desktop" to desktop))
+            options = Options.Default.copy(
+                extras = mutableMapOf(
+                    "desktop" to desktop,
+                    "fullscreen" to fullscreen.toString()
+                )
+            )
         )
     }
 
@@ -83,7 +101,9 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
         if (host.authentication.type == AuthenticationType.Password) {
             generalOption.passwordTextField.text = host.authentication.password
         }
-        generalOption.desktopTextField.text = host.options.extras["desktop"] ?: StringUtils.EMPTY
+        generalOption.resolutionComboBox.selectedItem = host.options.extras["desktop"] ?: StringUtils.EMPTY
+        generalOption.displayModeComboBox.selectedIndex =
+            if (host.options.extras["fullscreen"]?.toBooleanStrictOrNull() != false) 0 else 1
 
         proxyOption.proxyTypeComboBox.selectedItem = host.proxy.type
         proxyOption.proxyHostTextField.text = host.proxy.host
@@ -131,9 +151,13 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
             }
         }
 
-        val desktop = generalOption.desktopTextField.text.trim()
-        if (desktop.isNotBlank() && desktop.matches(Regex("^\\d+x\\d+$")).not()) {
-            setOutlineError(generalOption.desktopTextField)
+        val desktop = (generalOption.resolutionComboBox.editor.item?.toString() ?: "").trim()
+        if (desktop.isNotBlank() && desktop.lowercase().matches(Regex("^\\d+x\\d+$")).not()) {
+            selectOptionJComponent(generalOption.resolutionComboBox)
+            generalOption.resolutionComboBox.putClientProperty(
+                FlatClientProperties.OUTLINE, FlatClientProperties.OUTLINE_ERROR
+            )
+            generalOption.resolutionComboBox.requestFocusInWindow()
             return false
         }
 
@@ -162,7 +186,8 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
         val nameTextField = OutlineTextField(128)
         val usernameTextField = OutlineTextField(128)
         val hostTextField = OutlineTextField(255)
-        val desktopTextField = OutlineTextField(255)
+        val resolutionComboBox = FlatComboBox<String>()
+        val displayModeComboBox = FlatComboBox<String>()
         val passwordTextField = OutlinePasswordField(255)
         val remarkTextArea = FixedLengthTextArea(512)
         val authenticationTypeComboBox = FlatComboBox<AuthenticationType>()
@@ -207,7 +232,27 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
                 }
             }
 
-            desktopTextField.placeholderText = I18n.getString("termora.new-host.rdp.desktop-placeholder")
+            // 显示模式：全屏 / 窗口
+            displayModeComboBox.addItem(I18n.getString("termora.new-host.rdp.fullscreen"))
+            displayModeComboBox.addItem(I18n.getString("termora.new-host.rdp.windowed"))
+            // 默认采用上次新增 RDP 时使用的显示模式
+            displayModeComboBox.selectedIndex =
+                if (properties.getString(PROP_DISPLAY_MODE) == "windowed") 1 else 0
+
+            // 可选分辨率（可编辑，支持自定义 WxH）
+            resolutionComboBox.isEditable = true
+            for (r in listOf("", "1280x720", "1366x768", "1440x900", "1600x900", "1920x1080", "2560x1440", "3840x2160")) {
+                resolutionComboBox.addItem(r)
+            }
+            val resolutionEditor = resolutionComboBox.editor.editorComponent
+            if (resolutionEditor is JTextField) {
+                resolutionEditor.putClientProperty(
+                    FlatClientProperties.PLACEHOLDER_TEXT,
+                    I18n.getString("termora.new-host.rdp.desktop-placeholder")
+                )
+            }
+            // 默认采用上次新增 RDP 时使用的分辨率
+            resolutionComboBox.selectedItem = properties.getString(PROP_RESOLUTION) ?: StringUtils.EMPTY
 
             authenticationTypeComboBox.addItem(AuthenticationType.No)
             authenticationTypeComboBox.addItem(AuthenticationType.Password)
@@ -286,8 +331,11 @@ internal open class RDPHostOptionsPane(private val accountOwner: AccountOwner) :
                 .add("${I18n.getString("termora.new-host.general.password")}:").xy(1, rows)
                 .add(passwordTextField).xyw(3, rows, 5).apply { rows += step }
 
+                .add("${I18n.getString("termora.new-host.rdp.display-mode")}:").xy(1, rows)
+                .add(displayModeComboBox).xyw(3, rows, 5).apply { rows += step }
+
                 .add("${I18n.getString("termora.new-host.rdp.resolution")}:").xy(1, rows)
-                .add(desktopTextField).xyw(3, rows, 5).apply { rows += step }
+                .add(resolutionComboBox).xyw(3, rows, 5).apply { rows += step }
 
                 .add("${I18n.getString("termora.new-host.general.remark")}:").xy(1, rows)
                 .add(JScrollPane(remarkTextArea).apply { border = FlatTextBorder() })

@@ -87,6 +87,15 @@ object Application {
             baseDataDir = System.getenv("${getName()}_BASE_DATA_DIR".uppercase())
         }
 
+        // 便携模式（默认开启）：从软件根目录读取/存储配置
+        // 若软件根目录不可写（例如安装在 Program Files），自动回退到用户主目录
+        if (StringUtils.isBlank(baseDataDir) && isPortableConfigEnabled()) {
+            val portableDir = getPortableDataDir()
+            if (portableDir != null) {
+                baseDataDir = portableDir.absolutePath
+            }
+        }
+
         // Windows 并且是绿色版，那么判断所在目录是否有 data 目录
         if (SystemInfo.isWindows && getLayout() == AppLayout.Zip && StringUtils.isBlank(baseDataDir)) {
             val appPath = getAppPath()
@@ -112,6 +121,104 @@ object Application {
         Application.baseDataDir = dir
 
         return dir
+    }
+
+    /**
+     * 便携模式开关标记文件，存放在软件根目录。
+     * 约定：文件存在表示“关闭便携模式”（使用用户主目录）；不存在表示“开启便携模式”（默认）。
+     * 这样在默认开启便携模式时，不会向用户主目录写入任何文件。
+     */
+    private fun getPortableDisabledMarkerFile(): File? {
+        val root = getAppRootDir() ?: return null
+        return File(root, ".portable-disabled")
+    }
+
+    /**
+     * 是否启用便携模式（从软件根目录读取配置）。默认开启。
+     */
+    fun isPortableConfigEnabled(): Boolean {
+        val marker = getPortableDisabledMarkerFile() ?: return true
+        return marker.exists().not()
+    }
+
+    /**
+     * 设置是否启用便携模式（下次启动生效）。仅写入软件根目录，不会污染用户主目录。
+     */
+    fun setPortableConfigEnabled(enabled: Boolean) {
+        val marker = getPortableDisabledMarkerFile() ?: return
+        try {
+            if (enabled) {
+                FileUtils.deleteQuietly(marker)
+            } else {
+                FileUtils.forceMkdir(marker.parentFile)
+                marker.writeText("disabled")
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    /**
+     * 便携模式下的数据目录：软件根目录下的 data 目录。
+     * 仅在能够解析软件路径且目录确实可写时返回，否则返回 null（回退到用户主目录）。
+     */
+    private fun getPortableDataDir(): File? {
+        val root = getAppRootDir() ?: return null
+        val dataDir = File(root, "data")
+        return try {
+            FileUtils.forceMkdir(dataDir)
+            // 实际写入探测：Windows 上 Files.isWritable 对可写目录也可能误判为不可写
+            val probe = File(dataDir, ".write-test-${System.nanoTime()}")
+            probe.writeText("ok")
+            FileUtils.deleteQuietly(probe)
+            // 首次启用便携模式时，把用户主目录下的旧配置迁移过来，避免数据“丢失”
+            migrateLegacyDataIfNeeded(dataDir)
+            dataDir
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 解析软件根目录（可执行文件所在目录）。
+     */
+    private fun getAppRootDir(): File? {
+        // 优先使用 jpackage 提供的可执行文件路径
+        val appPath = getAppPath()
+        if (StringUtils.isNotBlank(appPath)) {
+            File(appPath).parentFile?.let { if (it.isDirectory) return it }
+        }
+        // 回退：使用当前进程可执行文件路径（开发环境通常是 java，可写性探测会失败从而回退主目录）
+        return try {
+            val command = ProcessHandle.current().info().command().orElse(null) ?: return null
+            // 开发环境下命令是 java(.exe)，不应被当作软件根目录
+            val file = File(command)
+            val name = file.name.lowercase()
+            if (name == "java" || name == "java.exe" || name == "javaw.exe") return null
+            file.parentFile?.takeIf { it.isDirectory }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 将用户主目录（~/.termora）下的旧配置迁移到便携目录（仅当便携目录尚无数据库时执行一次）。
+     */
+    private fun migrateLegacyDataIfNeeded(dataDir: File) {
+        try {
+            val portableDb = File(dataDir, "config/termora.db")
+            if (portableDb.exists()) return
+
+            val legacyDir = File(SystemUtils.getUserHome(), ".${getName()}".lowercase())
+            val legacyDb = File(legacyDir, "config/termora.db")
+            if (legacyDir.isDirectory.not() || legacyDb.exists().not()) return
+            if (legacyDir.canonicalFile == dataDir.canonicalFile) return
+
+            // 拷贝旧配置，排除临时目录
+            FileUtils.copyDirectory(legacyDir, dataDir, java.io.FileFilter { f -> f.name != "temporary" })
+        } catch (e: Exception) {
+            // 迁移失败不应阻断启动
+        }
     }
 
     fun getVersion(): String {

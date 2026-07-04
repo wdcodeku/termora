@@ -110,8 +110,8 @@ internal class PluginManager private constructor() {
         plugins.add(PluginDescriptor(AccountPlugin(), origin = PluginOrigin.Internal, version = version))
         // badge plugin
         plugins.add(PluginDescriptor(BadgePlugin(), origin = PluginOrigin.Internal, version = version))
-        // update plugin
-        plugins.add(PluginDescriptor(UpdaterPlugin(), origin = PluginOrigin.Internal, version = version))
+        // update plugin（已本地化：移除检查更新功能，不再注册更新插件）
+        // plugins.add(PluginDescriptor(UpdaterPlugin(), origin = PluginOrigin.Internal, version = version))
         // frame plugin
         plugins.add(PluginDescriptor(FramePlugin(), origin = PluginOrigin.Internal, version = version))
 
