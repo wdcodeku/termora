@@ -236,6 +236,16 @@ class NewHostTree : SimpleTree(), Disposable {
         return nodes.none { it is TeamTreeNode || it.id == "0" }
     }
 
+    /**
+     * 根据主机 ID 在树中选中并滚动到对应节点（供托盘菜单点击后定位使用）
+     */
+    fun selectHostById(id: String) {
+        val node = simpleTreeModel.getRoot().getAllChildren().firstOrNull { it.id == id } ?: return
+        val path = TreePath(simpleTreeModel.getPathToRoot(node))
+        selectionPath = path
+        scrollPathToVisible(path)
+    }
+
     override fun showContextmenu(evt: MouseEvent) {
         if (!contextmenu) return
         val lastNode = lastSelectedPathComponent
@@ -295,6 +305,19 @@ class NewHostTree : SimpleTree(), Disposable {
         showMoreInfo.isSelected = isShowMoreInfo
         showMoreInfo.addActionListener { isShowMoreInfo = !isShowMoreInfo }
         showTags.addActionListener { isShowTags = !isShowTags }
+        // 文件夹是否显示在托盘菜单上（默认显示）
+        val showInTray = showMenu.add(JCheckBoxMenuItem(I18n.getString("termora.welcome.contextmenu.show.tray")))
+        showInTray.isEnabled = lastNode.isFolder && lastNode.id != "0"
+        showInTray.isSelected = lastHost.options.extras["tray"] != "false"
+        showInTray.addActionListener {
+            val extras = lastHost.options.extras.toMutableMap()
+            if (showInTray.isSelected) extras.remove("tray") else extras["tray"] = "false"
+            lastNode.host = lastHost.copy(
+                options = lastHost.options.copy(extras = extras),
+                updateDate = System.currentTimeMillis()
+            )
+            simpleTreeModel.nodeStructureChanged(lastNode)
+        }
         val property = popupMenu.add(I18n.getString("termora.welcome.contextmenu.property"))
 
         xShellMenu.addActionListener { importHosts(lastNode, ImportType.Xshell) }

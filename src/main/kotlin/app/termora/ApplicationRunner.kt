@@ -1,8 +1,15 @@
 package app.termora
 
+import app.termora.actions.ActionManager
+import app.termora.actions.DataProvider
+import app.termora.actions.DataProviders
+import app.termora.actions.OpenHostAction
 import app.termora.database.DatabaseManager
 import app.termora.plugin.ExtensionManager
 import app.termora.plugin.PluginManager
+import app.termora.protocol.ProtocolProvider
+import app.termora.terminal.DataKey
+import com.formdev.flatlaf.icons.FlatTreeClosedIcon
 import com.formdev.flatlaf.FlatClientProperties
 import com.formdev.flatlaf.FlatSystemProperties
 import com.formdev.flatlaf.extras.FlatDesktop
@@ -121,10 +128,11 @@ class ApplicationRunner {
         trayIcon.isImageAutoSize = true
         trayIcon.toolTip = Application.getName()
 
-        trayPopup.add(I18n.getString("termora.exit")).addActionListener { quitHandler() }
+        rebuildTrayMenu(trayPopup)
         trayPopup.addPopupMenuListener(object : PopupMenuListener {
             override fun popupMenuWillBecomeVisible(e: PopupMenuEvent?) {
-
+                // 每次显示时根据最新的主机/文件夹重建菜单
+                rebuildTrayMenu(trayPopup)
             }
 
             override fun popupMenuWillBecomeInvisible(e: PopupMenuEvent?) {
@@ -181,6 +189,97 @@ class ApplicationRunner {
                 tray.remove(trayIcon)
             }
         })
+    }
+
+    /**
+     * 重建托盘菜单：顶层显示文件夹（子菜单展开主机），根级主机直接显示，最后是退出。
+     * 文件夹可通过 extras["tray"]=="false" 关闭托盘显示（默认显示）。
+     */
+    private fun rebuildTrayMenu(popup: JPopupMenu) {
+        popup.removeAll()
+
+        runCatching {
+            val all = HostManager.getInstance().hosts()
+            val byParent = all.groupBy { it.parentId.ifBlank { "0" } }
+
+            fun addChildren(add: (JMenuItem) -> Unit, parentId: String) {
+                val children = byParent[parentId] ?: return
+                for (child in children) {
+                    if (child.id == "0") continue
+                    if (child.isFolder) {
+                        // 文件夹是否显示在托盘（默认显示）
+                        if (child.options.extras["tray"] == "false") continue
+                        val submenu = JMenu(child.name)
+                        // 与主机树一致的文件夹图标
+                        submenu.icon = FlatTreeClosedIcon()
+                        addChildren({ submenu.add(it) }, child.id)
+                        // 只显示非空文件夹
+                        if (submenu.menuComponentCount > 0) add(submenu)
+                    } else {
+                        val item = JMenuItem(child.name)
+                        // 与主机树一致的协议图标
+                        item.icon = ProtocolProvider.valueOf(child.protocol)?.getIcon() ?: Icons.terminal
+                        item.addActionListener { openHostFromTray(child) }
+                        add(item)
+                    }
+                }
+            }
+
+            addChildren({ popup.add(it) }, "0")
+
+            if (popup.componentCount > 0) popup.addSeparator()
+        }.onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+
+        popup.add(I18n.getString("termora.exit")).addActionListener { quitHandler() }
+    }
+
+    /**
+     * 从托盘打开主机：确保窗口可见后，走标准的 OpenHostAction 打开。
+     */
+    private fun openHostFromTray(host: Host) {
+        SwingUtilities.invokeLater {
+            runCatching {
+                // RDP 等通过外部程序（mstsc）打开，不需要显示主界面
+                val external = host.protocol.equals("RDP", ignoreCase = true)
+
+                val manager = TermoraFrameManager.getInstance()
+                val frame = manager.getWindows().firstOrNull()
+                    ?: manager.createWindow().apply { if (!external) isVisible = true }
+
+                // 非外部协议才还原并前置主界面
+                if (!external) {
+                    if (frame.extendedState and Frame.ICONIFIED == Frame.ICONIFIED) {
+                        frame.extendedState = frame.extendedState and Frame.ICONIFIED.inv()
+                    }
+                    frame.isVisible = true
+                    frame.toFront()
+                }
+
+                val windowScope = ApplicationScope.forWindowScope(frame)
+                val tabbedManager = windowScope.get(TerminalTabbedManager::class)
+
+                // 托盘不在组件树中，用一个 DataProvider 作为事件源，提供所需数据
+                val provider = object : DataProvider {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : Any> getData(dataKey: DataKey<T>): T? {
+                        return when (dataKey) {
+                            DataProviders.WindowScope -> windowScope as T
+                            DataProviders.TerminalTabbedManager -> tabbedManager as T
+                            DataProviders.TermoraFrame -> frame as T
+                            else -> null
+                        }
+                    }
+                }
+
+                ActionManager.getInstance().getAction(OpenHostAction.OPEN_HOST)
+                    ?.actionPerformed(OpenHostActionEvent(provider, host, EventObject(provider)))
+
+                // 非外部协议：在左侧主机树选中对应主机
+                if (!external) {
+                    frame.getData(DataProviders.Welcome.HostTree)?.selectHostById(host.id)
+                }
+            }.onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+        }
     }
 
     private fun quitHandler() {
