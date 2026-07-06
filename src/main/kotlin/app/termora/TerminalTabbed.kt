@@ -83,6 +83,8 @@ class TerminalTabbed(
 
             if (newIndex >= 0 && tabs.size > newIndex) {
                 tabs[newIndex].onGrabFocus()
+                // 切换标签时在左侧主机树选中对应主机
+                selectHostInTree(tabs[newIndex])
             }
 
         }
@@ -430,6 +432,19 @@ class TerminalTabbed(
 
     override fun addTerminalTab(index: Int, tab: TerminalTab, selected: Boolean) {
         addTab(index, tab, selected)
+    }
+
+    /**
+     * 切换到主机标签时，在左侧主机树选中并定位对应主机（临时主机除外）
+     */
+    private fun selectHostInTree(tab: TerminalTab) {
+        if (tab !is HostTerminalTab) return
+        val host = tab.host
+        if (host.isTemporary) return
+        val window = windowScope.window
+        if (window is DataProvider) {
+            window.getData(DataProviders.Welcome.HostTree)?.selectHostById(host.id)
+        }
     }
 
     override fun getSelectedTerminalTab(): TerminalTab? {
