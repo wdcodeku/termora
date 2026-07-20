@@ -6,6 +6,7 @@ import app.termora.findeverywhere.FindEverywhereAction
 import app.termora.highlight.KeywordHighlightAction
 import app.termora.keymgr.KeyManagerAction
 import app.termora.macro.MacroAction
+import app.termora.favorite.FavoriteAction
 import app.termora.snippet.SnippetAction
 import app.termora.tlog.TerminalLoggerAction
 import app.termora.transfer.TransferAnAction
@@ -36,6 +37,7 @@ class ActionManager : org.jdesktop.swingx.action.ActionManager() {
         addAction(SFTPCommandAction.SFTP_COMMAND, SFTPCommandAction())
         addAction(MultipleAction.MULTIPLE, MultipleAction.getInstance())
         addAction(SnippetAction.SNIPPET, SnippetAction.getInstance())
+        addAction(FavoriteAction.FAVORITE, FavoriteAction.getInstance())
         addAction(Actions.MACRO, MacroAction())
         addAction(Actions.KEY_MANAGER, KeyManagerAction())
 

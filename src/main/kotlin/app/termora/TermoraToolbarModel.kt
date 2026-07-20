@@ -5,6 +5,7 @@ import app.termora.actions.ActionManager
 import app.termora.actions.MultipleAction
 import app.termora.actions.SettingsAction
 import app.termora.database.DatabaseManager
+import app.termora.favorite.FavoriteAction
 import app.termora.findeverywhere.FindEverywhereAction
 import app.termora.snippet.SnippetAction
 import org.apache.commons.lang3.StringUtils
@@ -30,6 +31,7 @@ internal class TermoraToolbarModel private constructor() {
      */
     fun getAllActions(): List<ToolBarAction> {
         return listOf(
+            ToolBarAction(FavoriteAction.FAVORITE, true),
             ToolBarAction(SnippetAction.SNIPPET, true),
             ToolBarAction(Actions.SFTP, true),
             ToolBarAction(Actions.TERMINAL_LOGGER, true),
