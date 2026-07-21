@@ -8,7 +8,9 @@ import org.apache.commons.lang3.StringUtils
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Toolkit
 import java.awt.Window
+import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
@@ -23,6 +25,7 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
 
     private val addButton = FlatButton()
     private val editButton = FlatButton()
+    private val copyButton = FlatButton()
     private val removeButton = FlatButton()
 
     init {
@@ -50,9 +53,11 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
         addButton.toolTipText = I18n.getString("termora.favorite.add")
         editButton.icon = Icons.edit
         editButton.toolTipText = I18n.getString("termora.keymgr.edit")
+        copyButton.icon = Icons.copy
+        copyButton.toolTipText = I18n.getString("termora.welcome.contextmenu.copy")
         removeButton.icon = Icons.delete
         removeButton.toolTipText = I18n.getString("termora.remove")
-        for (b in arrayOf(addButton, editButton, removeButton)) {
+        for (b in arrayOf(addButton, editButton, copyButton, removeButton)) {
             b.isFocusable = false
             b.buttonType = FlatButton.ButtonType.toolBarButton
         }
@@ -69,6 +74,13 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
         }
 
         editButton.addActionListener { editSelected() }
+
+        copyButton.addActionListener {
+            val row = table.selectedRow
+            if (row < 0) return@addActionListener
+            val command = favorites[row].command
+            Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(command), null)
+        }
 
         removeButton.addActionListener {
             val row = table.selectedRow
@@ -161,6 +173,7 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 2, 2))
         toolbar.add(addButton)
         toolbar.add(editButton)
+        toolbar.add(copyButton)
         toolbar.add(removeButton)
 
         val tip = JLabel(I18n.getString("termora.favorite.double-click-tip"))
