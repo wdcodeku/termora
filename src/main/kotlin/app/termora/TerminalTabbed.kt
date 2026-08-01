@@ -90,9 +90,17 @@ class TerminalTabbed(
         }
 
 
-        // 右键菜单
+        // 右键菜单 / 中键关闭
         tabbedPane.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
+                // 鼠标中键关闭标签
+                if (SwingUtilities.isMiddleMouseButton(e)) {
+                    val index = tabbedPane.indexAtLocation(e.x, e.y)
+                    if (index < 0) return
+                    removeTabAt(index, true)
+                    return
+                }
+
                 if (!SwingUtilities.isRightMouseButton(e)) {
                     return
                 }
@@ -435,16 +443,20 @@ class TerminalTabbed(
     }
 
     /**
-     * 切换到主机标签时，在左侧主机树选中并定位对应主机（临时主机除外）
+     * 切换标签时同步左侧主机树的选中状态。
+     * 快速连接等临时主机不在列表中，此时清空选中，避免保留上一个主机的选中状态。
      */
     private fun selectHostInTree(tab: TerminalTab) {
-        if (tab !is HostTerminalTab) return
-        val host = tab.host
-        if (host.isTemporary) return
         val window = windowScope.window
-        if (window is DataProvider) {
-            window.getData(DataProviders.Welcome.HostTree)?.selectHostById(host.id)
+        if (window !is DataProvider) return
+        val tree = window.getData(DataProviders.Welcome.HostTree) ?: return
+
+        val host = (tab as? HostTerminalTab)?.host
+        if (host == null || host.isTemporary) {
+            tree.clearSelection()
+            return
         }
+        tree.selectHostById(host.id)
     }
 
     override fun getSelectedTerminalTab(): TerminalTab? {

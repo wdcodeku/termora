@@ -50,7 +50,8 @@ class QuickConnectAction private constructor() : AnAction(I18n.getString("termor
 
         override fun createCenterPanel(): JComponent {
             hostComboBox.isEditable = true
-            hostComboBox.placeholderText = "ssh://127.0.0.1:22"
+            // 支持 ssh/rdp 等协议，例如：ssh://127.0.0.1:22、rdp://192.168.1.10:3389
+            hostComboBox.placeholderText = "ssh://127.0.0.1:22 | rdp://127.0.0.1:3389"
 
             val histories = getHistories()
             for (history in histories) {
@@ -127,12 +128,15 @@ class QuickConnectAction private constructor() : AnAction(I18n.getString("termor
                 throw UnsupportedOperationException(I18n.getString("termora.protocol.not-supported", uri.scheme))
             }
 
+            // 未指定端口时使用协议默认端口
+            val port = if (uri.port > 0) uri.port else defaultPort(protocolProvider.getProtocol())
+
             val historyHost = HistoryHost(
                 host, Host(
                     name = uri.host,
-                    protocol = uri.scheme,
+                    protocol = protocolProvider.getProtocol(),
                     host = uri.host,
-                    port = uri.port,
+                    port = port,
                     username = usernameTextField.text.trim(),
                     authentication = Authentication.No.copy(
                         type = AuthenticationType.Password,
@@ -154,6 +158,18 @@ class QuickConnectAction private constructor() : AnAction(I18n.getString("termor
             properties.putString("QuickConnect.historyHosts", ohMyJson.encodeToString(histories))
 
             return historyHost
+        }
+
+        /**
+         * 常见协议的默认端口
+         */
+        private fun defaultPort(protocol: String): Int {
+            return when {
+                protocol.equals("RDP", true) -> 3389
+                protocol.equals("SSH", true) -> 22
+                protocol.equals("Telnet", true) -> 23
+                else -> 0
+            }
         }
 
         private fun getHistories(): List<HistoryHost> {

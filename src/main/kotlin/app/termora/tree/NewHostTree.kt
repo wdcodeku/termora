@@ -240,7 +240,12 @@ class NewHostTree : SimpleTree(), Disposable {
      * 根据主机 ID 在树中选中并滚动到对应节点（供托盘菜单点击后定位使用）
      */
     fun selectHostById(id: String) {
-        val node = simpleTreeModel.getRoot().getAllChildren().firstOrNull { it.id == id } ?: return
+        val node = simpleTreeModel.getRoot().getAllChildren().firstOrNull { it.id == id }
+        if (node == null) {
+            // 不在列表中（例如快速连接的临时主机）时不保留旧的选中状态
+            clearSelection()
+            return
+        }
         val path = TreePath(simpleTreeModel.getPathToRoot(node))
         selectionPath = path
         scrollPathToVisible(path)
