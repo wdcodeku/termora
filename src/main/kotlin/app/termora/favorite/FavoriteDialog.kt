@@ -30,7 +30,8 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
 
     init {
         size = Dimension(UIManager.getInt("Dialog.width"), UIManager.getInt("Dialog.height"))
-        isModal = true
+        // 非模态：打开收藏夹后主窗口仍然可以操作
+        isModal = false
         isResizable = true
         title = I18n.getString("termora.favorite.title")
         setLocationRelativeTo(owner)
@@ -75,20 +76,9 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
 
         editButton.addActionListener { editSelected() }
 
-        copyButton.addActionListener {
-            val row = table.selectedRow
-            if (row < 0) return@addActionListener
-            val command = favorites[row].command
-            Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(command), null)
-        }
+        copyButton.addActionListener { copySelected() }
 
-        removeButton.addActionListener {
-            val row = table.selectedRow
-            if (row < 0) return@addActionListener
-            favorites.removeAt(row)
-            favoriteManager.setFavorites(favorites)
-            tableModel.fireTableDataChanged()
-        }
+        removeButton.addActionListener { removeSelected() }
 
         table.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -97,7 +87,51 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
                 if (row < 0) return
                 sendToTerminal(favorites[row])
             }
+
+            override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
+
+            override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
+
+            private fun maybeShowPopup(e: MouseEvent) {
+                if (!e.isPopupTrigger) return
+                val row = table.rowAtPoint(e.point)
+                if (row < 0) return
+                // 右键时先选中所在行
+                table.setRowSelectionInterval(row, row)
+                createContextMenu().show(table, e.x, e.y)
+            }
         })
+    }
+
+    /**
+     * 列表右键菜单：发送、编辑、复制、删除
+     */
+    private fun createContextMenu(): JPopupMenu {
+        val popupMenu = JPopupMenu()
+        popupMenu.add(I18n.getString("termora.favorite.send")).addActionListener {
+            val row = table.selectedRow
+            if (row >= 0) sendToTerminal(favorites[row])
+        }
+        popupMenu.addSeparator()
+        popupMenu.add(I18n.getString("termora.keymgr.edit")).addActionListener { editSelected() }
+        popupMenu.add(I18n.getString("termora.welcome.contextmenu.copy")).addActionListener { copySelected() }
+        popupMenu.add(I18n.getString("termora.remove")).addActionListener { removeSelected() }
+        return popupMenu
+    }
+
+    private fun copySelected() {
+        val row = table.selectedRow
+        if (row < 0) return
+        val command = favorites[row].command
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(command), null)
+    }
+
+    private fun removeSelected() {
+        val row = table.selectedRow
+        if (row < 0) return
+        favorites.removeAt(row)
+        favoriteManager.setFavorites(favorites)
+        tableModel.fireTableDataChanged()
     }
 
     private fun editSelected() {
@@ -158,15 +192,26 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
             return
         }
         writer.write(TerminalWriter.WriteRequest.fromBytes(favorite.command.toByteArray(writer.getCharset())))
-        dispose()
+        // 非模态窗口，发送后保持打开，便于连续发送；把焦点交回终端
+        currentTerminalPanel()?.let { panel ->
+            SwingUtilities.invokeLater { panel.requestFocusInWindow() }
+        }
+    }
+
+    private fun currentTerminalPanel(): JComponent? {
+        val tab = currentTerminalTab() ?: return null
+        return tab.getData(DataProviders.TerminalPanel)
     }
 
     private fun currentTerminalWriter(): TerminalWriter? {
+        return currentTerminalTab()?.getData(DataProviders.TerminalWriter)
+    }
+
+    private fun currentTerminalTab(): TerminalTab? {
         val window = owner ?: return null
         val scope = runCatching { ApplicationScope.forWindowScope(window) }.getOrNull() ?: return null
         val manager = runCatching { scope.get(TerminalTabbedManager::class) }.getOrNull() ?: return null
-        val tab = manager.getSelectedTerminalTab() ?: return null
-        return tab.getData(DataProviders.TerminalWriter)
+        return manager.getSelectedTerminalTab()
     }
 
     override fun createCenterPanel(): JComponent {
