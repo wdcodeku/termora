@@ -2,6 +2,9 @@ name: Linux
 
 on: [ push, pull_request ]
 
+permissions:
+  contents: write
+
 env:
   JBR_MAJOR: 25.0.2
   JBR_PATCH: b329.111
@@ -79,3 +82,14 @@ jobs:
           name: termora-linux-deb-${{ runner.arch }}
           path: |
             build/distributions/*.deb
+
+      - name: Upload Linux files to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            build/distributions/*.tar.gz
+            build/distributions/*.AppImage
+            build/distributions/*.deb
+          fail_on_unmatched_files: true
