@@ -81,7 +81,7 @@ public class UiSettings {
 		listeners.add(listener);
 	}
 
-	void fireListeners() {
+	public void fireListeners() {
         if (null == listeners) return;
 		final SettingsChangedEvent event = new SettingsChangedEvent(new UiSettings(this));
 		changedSettingsMask = 0;
