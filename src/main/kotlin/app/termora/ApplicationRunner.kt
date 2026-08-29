@@ -111,7 +111,7 @@ class ApplicationRunner {
             SwingUtilities.invokeLater {
                 // 托盘不是核心功能，创建失败不应该影响启动
                 runCatching { setupSystemTray() }
-                    .onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+                    .onFailure { if (log.isErrorEnabled) log.error("Failed to setup the system tray", it) }
             }
         }
 
@@ -120,19 +120,69 @@ class ApplicationRunner {
     }
 
     private fun setupSystemTray() {
-        if (SystemInfo.isLinux || !SystemTray.isSupported()) return
+        if (SystemInfo.isLinux) return
+
+        if (!SystemTray.isSupported()) {
+            if (log.isWarnEnabled) {
+                log.warn("SystemTray is not supported")
+            }
+            return
+        }
+
+        // macOS 菜单栏图标应该是模板图：丢弃颜色信息，由系统按菜单栏的深浅色自动适配。
+        // 必须在创建 TrayIcon 之前设置。
+        if (SystemInfo.isMacOS) {
+            System.setProperty("apple.awt.enableTemplateImages", "true")
+        }
 
         val tray = SystemTray.getSystemTray()
-        val trayIcon = TrayIcon(loadTrayImage(tray))
+        val image = loadTrayImage(tray)
+        val trayIcon = TrayIcon(image)
+
+        trayIcon.isImageAutoSize = true
+        trayIcon.toolTip = Application.getName()
+
+        if (log.isInfoEnabled) {
+            log.info(
+                "Setting up system tray, trayIconSize: {} , image: {}x{}",
+                tray.trayIconSize, image.getWidth(null), image.getHeight(null)
+            )
+        }
+
+        // macOS 上使用 AWT 的 PopupMenu，它会映射成原生 NSMenu：
+        // 由系统负责单击弹出与关闭，比 Swing 的 JPopupMenu 配合隐藏窗口那套做法可靠。
+        if (SystemInfo.isMacOS) {
+            val popupMenu = PopupMenu()
+            rebuildNativeTrayMenu(popupMenu)
+            trayIcon.popupMenu = popupMenu
+
+            // AWT 没有「菜单即将显示」的回调，所以在按下时重建，保证下一次展开是最新的主机列表
+            trayIcon.addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) {
+                    rebuildNativeTrayMenu(popupMenu)
+                }
+            })
+
+            tray.add(trayIcon)
+
+            if (log.isInfoEnabled) {
+                log.info("System tray icon added")
+            }
+
+            Disposer.register(ApplicationScope.forApplicationScope(), object : Disposable {
+                override fun dispose() {
+                    tray.remove(trayIcon)
+                }
+            })
+            return
+        }
+
         val dialog = JDialog()
         val trayPopup = JPopupMenu()
 
         dialog.isUndecorated = true
         dialog.isModal = false
         dialog.size = Dimension(0, 0)
-
-        trayIcon.isImageAutoSize = true
-        trayIcon.toolTip = Application.getName()
 
         rebuildTrayMenu(trayPopup)
         trayPopup.addPopupMenuListener(object : PopupMenuListener {
@@ -155,29 +205,23 @@ class ApplicationRunner {
 
         })
 
-        val showPopup = {
-            val mouseLocation = MouseInfo.getPointerInfo().location
-            trayPopup.setLocation(mouseLocation.x, mouseLocation.y)
-            trayPopup.setInvoker(dialog)
-            dialog.isVisible = true
-            trayPopup.isVisible = true
-        }
-
         trayIcon.addMouseListener(object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) {
-                // macOS 菜单栏图标的惯例是单击就弹出菜单，
-                // 而左键单击时 isPopupTrigger 为 false，所以不能照搬 Windows 的判断，
-                // 否则在 macOS 上点击图标会没有任何反应
-                if (SystemInfo.isMacOS) showPopup.invoke() else maybeShowPopup(e)
+            override fun mouseReleased(e: MouseEvent) {
+                maybeShowPopup(e)
             }
 
-            override fun mouseReleased(e: MouseEvent) {
-                // macOS 上按下时已经弹出，这里不再重复处理
-                if (!SystemInfo.isMacOS) maybeShowPopup(e)
+            override fun mousePressed(e: MouseEvent) {
+                maybeShowPopup(e)
             }
 
             private fun maybeShowPopup(e: MouseEvent) {
-                if (e.isPopupTrigger) showPopup.invoke()
+                if (e.isPopupTrigger) {
+                    val mouseLocation = MouseInfo.getPointerInfo().location
+                    trayPopup.setLocation(mouseLocation.x, mouseLocation.y)
+                    trayPopup.setInvoker(dialog)
+                    dialog.isVisible = true
+                    trayPopup.isVisible = true
+                }
             }
         })
 
@@ -196,10 +240,59 @@ class ApplicationRunner {
 
         tray.add(trayIcon)
 
+        if (log.isInfoEnabled) {
+            log.info("System tray icon added")
+        }
+
         Disposer.register(ApplicationScope.forApplicationScope(), object : Disposable {
             override fun dispose() {
                 tray.remove(trayIcon)
             }
+        })
+    }
+
+    /**
+     * 构建 macOS 的原生托盘菜单（AWT PopupMenu -> NSMenu）。
+     *
+     * 与 Swing 版本的差异：AWT 的 MenuItem 不支持图标，所以主机和文件夹只显示名称。
+     */
+    private fun rebuildNativeTrayMenu(popup: PopupMenu) {
+        popup.removeAll()
+
+        runCatching {
+            val all = HostManager.getInstance().hosts()
+            val byParent = all.groupBy { it.parentId.ifBlank { "0" } }
+
+            fun addChildren(add: (MenuItem) -> Unit, parentId: String) {
+                val children = byParent[parentId] ?: return
+                for (child in children) {
+                    if (child.id == "0") continue
+                    if (child.isFolder) {
+                        // 文件夹是否显示在托盘（默认显示）
+                        if (child.options.extras["tray"] == "false") continue
+                        val submenu = Menu(child.name)
+                        addChildren({ submenu.add(it) }, child.id)
+                        // 只显示非空文件夹
+                        if (submenu.itemCount > 0) add(submenu)
+                    } else {
+                        val item = MenuItem(child.name)
+                        item.addActionListener { openHostFromTray(child) }
+                        add(item)
+                    }
+                }
+            }
+
+            addChildren({ popup.add(it) }, "0")
+
+            if (popup.itemCount > 0) popup.addSeparator()
+        }.onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+
+        popup.add(MenuItem(I18n.getString("termora.tray.show-main-window")).apply {
+            addActionListener { TermoraFrameManager.getInstance().tick() }
+        })
+
+        popup.add(MenuItem(I18n.getString("termora.exit")).apply {
+            addActionListener { quitHandler() }
         })
     }
 
@@ -213,7 +306,10 @@ class ApplicationRunner {
         val expected = minOf(tray.trayIconSize.width, tray.trayIconSize.height).coerceAtLeast(16)
         val sizes = intArrayOf(16, 20, 24, 28, 32, 44, 48, 64, 128, 256)
         val pick = sizes.firstOrNull { it >= expected } ?: sizes.last()
-        val image = ImageIO.read(TermoraFrame::class.java.getResourceAsStream("/icons/termora_${pick}x${pick}.png"))
+        val name = "/icons/termora_${pick}x${pick}.png"
+        // 真的缺资源时要能从日志看出来，而不是静默地没有图标
+        val image = TermoraFrame::class.java.getResourceAsStream(name)?.use { ImageIO.read(it) }
+            ?: throw IllegalStateException("Tray icon resource not found: $name")
 
         if (pick == expected) return image
 
