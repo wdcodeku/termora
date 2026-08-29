@@ -28,6 +28,7 @@ import java.awt.desktop.AppReopenedEvent
 import java.awt.desktop.AppReopenedListener
 import java.awt.desktop.SystemEventListener
 import java.awt.event.*
+import java.awt.image.BufferedImage
 import java.util.*
 import java.util.concurrent.CountDownLatch
 import javax.imageio.ImageIO
@@ -103,9 +104,15 @@ class ApplicationRunner {
                 // Command + Q
                 FlatDesktop.setQuitHandler { quitHandler() }
             }
-        } else if (SystemInfo.isWindows) {
-            // 设置托盘
-            SwingUtilities.invokeLater { setupSystemTray() }
+        }
+
+        // 设置托盘：macOS 在菜单栏右侧，Windows 在通知区域
+        if (SystemInfo.isMacOS || SystemInfo.isWindows) {
+            SwingUtilities.invokeLater {
+                // 托盘不是核心功能，创建失败不应该影响启动
+                runCatching { setupSystemTray() }
+                    .onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+            }
         }
 
         // 初始化 Scheme
@@ -113,11 +120,10 @@ class ApplicationRunner {
     }
 
     private fun setupSystemTray() {
-        if (!SystemInfo.isWindows || !SystemTray.isSupported()) return
+        if (SystemInfo.isLinux || !SystemTray.isSupported()) return
 
         val tray = SystemTray.getSystemTray()
-        val image = ImageIO.read(TermoraFrame::class.java.getResourceAsStream("/icons/termora_32x32.png"))
-        val trayIcon = TrayIcon(image)
+        val trayIcon = TrayIcon(loadTrayImage(tray))
         val dialog = JDialog()
         val trayPopup = JPopupMenu()
 
@@ -149,23 +155,29 @@ class ApplicationRunner {
 
         })
 
+        val showPopup = {
+            val mouseLocation = MouseInfo.getPointerInfo().location
+            trayPopup.setLocation(mouseLocation.x, mouseLocation.y)
+            trayPopup.setInvoker(dialog)
+            dialog.isVisible = true
+            trayPopup.isVisible = true
+        }
+
         trayIcon.addMouseListener(object : MouseAdapter() {
-            override fun mouseReleased(e: MouseEvent) {
-                maybeShowPopup(e)
+            override fun mousePressed(e: MouseEvent) {
+                // macOS 菜单栏图标的惯例是单击就弹出菜单，
+                // 而左键单击时 isPopupTrigger 为 false，所以不能照搬 Windows 的判断，
+                // 否则在 macOS 上点击图标会没有任何反应
+                if (SystemInfo.isMacOS) showPopup.invoke() else maybeShowPopup(e)
             }
 
-            override fun mousePressed(e: MouseEvent) {
-                maybeShowPopup(e)
+            override fun mouseReleased(e: MouseEvent) {
+                // macOS 上按下时已经弹出，这里不再重复处理
+                if (!SystemInfo.isMacOS) maybeShowPopup(e)
             }
 
             private fun maybeShowPopup(e: MouseEvent) {
-                if (e.isPopupTrigger) {
-                    val mouseLocation = MouseInfo.getPointerInfo().location
-                    trayPopup.setLocation(mouseLocation.x, mouseLocation.y)
-                    trayPopup.setInvoker(dialog)
-                    dialog.isVisible = true
-                    trayPopup.isVisible = true
-                }
+                if (e.isPopupTrigger) showPopup.invoke()
             }
         })
 
@@ -189,6 +201,30 @@ class ApplicationRunner {
                 tray.remove(trayIcon)
             }
         })
+    }
+
+    /**
+     * 按托盘实际尺寸挑选最接近的图标资源。
+     *
+     * macOS 菜单栏留给图标的高度只有 22pt 左右，直接丢一张 32x32 交给 isImageAutoSize 缩放会发虚，
+     * 所以先选一张不小于目标尺寸的资源，再做一次高质量缩放（缩小比放大清晰）。
+     */
+    private fun loadTrayImage(tray: SystemTray): Image {
+        val expected = minOf(tray.trayIconSize.width, tray.trayIconSize.height).coerceAtLeast(16)
+        val sizes = intArrayOf(16, 20, 24, 28, 32, 44, 48, 64, 128, 256)
+        val pick = sizes.firstOrNull { it >= expected } ?: sizes.last()
+        val image = ImageIO.read(TermoraFrame::class.java.getResourceAsStream("/icons/termora_${pick}x${pick}.png"))
+
+        if (pick == expected) return image
+
+        val scaled = BufferedImage(expected, expected, BufferedImage.TYPE_INT_ARGB)
+        val g = scaled.createGraphics()
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.drawImage(image, 0, 0, expected, expected, null)
+        g.dispose()
+        return scaled
     }
 
     /**
@@ -229,6 +265,12 @@ class ApplicationRunner {
 
             if (popup.componentCount > 0) popup.addSeparator()
         }.onFailure { if (log.isWarnEnabled) log.warn(it.message, it) }
+
+        // macOS 上单击图标弹出的就是这个菜单，双击回调不会触发，
+        // 而且开启后台运行后关闭窗口是直接销毁的，所以必须有一个显式的入口回到主界面
+        popup.add(I18n.getString("termora.tray.show-main-window")).addActionListener {
+            TermoraFrameManager.getInstance().tick()
+        }
 
         popup.add(I18n.getString("termora.exit")).addActionListener { quitHandler() }
     }

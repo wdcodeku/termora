@@ -214,7 +214,12 @@ class TermoraFrameManager : Disposable {
     fun tick() {
         if (SwingUtilities.isEventDispatchThread()) {
             val windows = getWindows()
-            if (windows.isEmpty()) return
+            // macOS 开启后台运行后，关闭窗口是直接销毁的，此时一个窗口都不剩，
+            // 从托盘或 Dock 唤起时需要重新创建，否则点了没有任何反应
+            if (windows.isEmpty()) {
+                createWindow().isVisible = true
+                return
+            }
             for (window in windows) {
                 if (window.extendedState and JFrame.ICONIFIED == JFrame.ICONIFIED) {
                     window.extendedState = window.extendedState and JFrame.ICONIFIED.inv()
