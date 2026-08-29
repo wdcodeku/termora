@@ -66,6 +66,9 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
         // Windows 下 mstsc 通过 DPAPI 加密的 password 51 字段已经可以免密，所以继续用 mstsc。
         if (!SystemInfo.isWindows) {
             val freerdp = findFreeRDP()
+            if (log.isInfoEnabled) {
+                log.info("openRDP: FreeRDP client = {}", freerdp?.absolutePath ?: "<not found>")
+            }
             if (freerdp != null) {
                 if (openWithFreeRDP(windowScope, host, freerdp)) return
                 // 启动失败，继续尝试系统自带的客户端
@@ -263,7 +266,10 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
      * @return 是否成功启动，false 表示调用方需要回退到系统自带的客户端
      */
     private fun openWithFreeRDP(windowScope: WindowScope, host: Host, freerdp: File): Boolean {
-        val args = mutableListOf(freerdp.absolutePath)
+        // FreeRDP 的实际参数，每个占一行，稍后通过 /args-from:stdin 从标准输入喂给它。
+        // 这样密码不会出现在进程列表（ps）里，而且 /args-from 在解析阶段就读取，
+        // 比 /from-stdin（要等服务器请求凭据时才读，管道下不一定触发）可靠。
+        val args = mutableListOf<String>()
 
         // IPv6 地址需要用方括号包裹，才能和端口区分开
         var address = host.host.trim()
@@ -274,6 +280,18 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
 
         if (host.username.isNotBlank()) {
             args.add("/u:${host.username}")
+        }
+
+        val password = if (host.authentication.type == AuthenticationType.Password) {
+            host.authentication.password
+        } else {
+            StringUtils.EMPTY
+        }
+        if (password.isNotEmpty()) {
+            args.add("/p:${password}")
+        } else {
+            // 没有密码时用 /p 抑制交互式提示（例如服务器不需要凭据）
+            args.add("/p")
         }
 
         // 忽略证书校验，等价于 .rdp 的 authentication level:i:0，
@@ -296,23 +314,21 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
             args.add("/f")
         }
 
-        val password = if (host.authentication.type == AuthenticationType.Password) {
-            host.authentication.password
-        } else {
-            StringUtils.EMPTY
-        }
-
-        // 从标准输入读取凭据
-        if (password.isNotEmpty()) {
-            args.add("/from-stdin")
+        if (log.isInfoEnabled) {
+            // 不打印密码
+            val safe = args.map { if (it.startsWith("/p:")) "/p:***" else it }
+            log.info("Launching {} /args-from:stdin with args: {}", freerdp.name, safe.joinToString(" "))
         }
 
         return runCatching {
-            val process = ProcessBuilder(args).redirectErrorStream(true).start()
-            process.outputStream.use {
-                if (password.isNotEmpty()) {
-                    it.write("$password\n".toByteArray(Charsets.UTF_8))
-                }
+            // 命令行上只有 /args-from:stdin，真正的参数（含密码）从 stdin 逐行传入。
+            // 文档要求 /args-from 不能与其它参数组合。
+            val process = ProcessBuilder(freerdp.absolutePath, "/args-from:stdin")
+                .redirectErrorStream(true)
+                .start()
+            process.outputStream.use { out ->
+                out.write(args.joinToString("\n").toByteArray(Charsets.UTF_8))
+                out.write("\n".toByteArray(Charsets.UTF_8))
             }
             watchFreeRDP(windowScope, process, freerdp.name)
             true
