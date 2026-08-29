@@ -2,6 +2,7 @@ package app.termora.plugin.internal.rdp
 
 import app.termora.*
 import app.termora.actions.DataProvider
+import app.termora.database.DatabaseManager
 import app.termora.protocol.GenericProtocolProvider
 import com.formdev.flatlaf.util.SystemInfo
 import com.sun.jna.Native
@@ -19,17 +20,27 @@ import org.apache.commons.io.IOUtils
 import org.apache.commons.lang3.StringUtils
 import org.apache.commons.lang3.Strings
 import org.apache.commons.lang3.SystemUtils
+import org.apache.commons.text.StringEscapeUtils
+import org.slf4j.LoggerFactory
 import java.awt.GraphicsEnvironment
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
+import java.io.File
 import java.net.URI
 import javax.swing.JOptionPane
+import javax.swing.SwingUtilities
 import kotlin.time.Duration.Companion.seconds
 
 internal class RDPProtocolProvider private constructor() : GenericProtocolProvider {
     companion object {
+        private val log = LoggerFactory.getLogger(RDPProtocolProvider::class.java)
         val instance by lazy { RDPProtocolProvider() }
         const val PROTOCOL = "RDP"
+
+        /**
+         * 是否已经提示过「密码已复制到剪贴板」
+         */
+        private const val PROP_CLIPBOARD_TIPPED = "RDP.clipboard-password-tipped"
     }
 
     override fun getProtocol(): String {
@@ -50,20 +61,33 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
     }
 
     private fun openRDP(windowScope: WindowScope, host: Host) {
-        if (SystemInfo.isLinux) {
-            OptionPane.showMessageDialog(
-                windowScope.window,
-                "Linux cannot connect to Windows Remote Server, Supported only for macOS and Windows",
-                messageType = JOptionPane.WARNING_MESSAGE
-            )
-            return
+        // macOS / Linux 优先使用 FreeRDP：它支持非交互式登录，可以直接使用已保存的密码，
+        // 不需要每次手动输入。
+        // Windows 下 mstsc 通过 DPAPI 加密的 password 51 字段已经可以免密，所以继续用 mstsc。
+        if (!SystemInfo.isWindows) {
+            val freerdp = findFreeRDP()
+            if (freerdp != null) {
+                if (openWithFreeRDP(windowScope, host, freerdp)) return
+                // 启动失败，继续尝试系统自带的客户端
+            } else if (SystemInfo.isLinux) {
+                OptionPane.showMessageDialog(
+                    windowScope.window,
+                    "FreeRDP is required to connect to a Windows Remote Server on Linux.<br/><br/>"
+                            + "Install it first, for example: <b>sudo apt install freerdp3-x11</b>",
+                    messageType = JOptionPane.WARNING_MESSAGE
+                )
+                return
+            }
         }
 
         if (SystemInfo.isMacOS) {
             if (!FileUtils.getFile("/Applications/Windows App.app").exists()) {
                 val option = OptionPane.showConfirmDialog(
                     windowScope.window,
-                    "If you want to connect to a Windows Remote Server, You have to install the Windows App",
+                    "If you want to connect to a Windows Remote Server, You have to install the Windows App.<br/><br/>"
+                            + "The Windows App cannot read the password from a .rdp file, so it asks for the "
+                            + "password on every connection. Install FreeRDP instead to sign in automatically "
+                            + "with the saved password: <b>brew install freerdp</b>",
                     optionType = JOptionPane.OK_CANCEL_OPTION
                 )
                 if (option == JOptionPane.OK_OPTION) {
@@ -137,12 +161,18 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
             }
         }
 
+        // 密码是否退化成了剪贴板方式，启动客户端之后需要提示用户
+        var passwordInClipboard = false
+
         if (host.authentication.type == AuthenticationType.Password) {
             val password = host.authentication.password
             var ep = StringUtils.EMPTY
 
             if (SystemInfo.isWindows) {
-                val cmd = "ConvertTo-SecureString '${password}' -AsPlainText -Force | ConvertFrom-SecureString"
+                // PowerShell 单引号字符串里的单引号必须写两遍来转义，
+                // 否则密码只要包含 ' 就会让命令执行失败，从而退化成剪贴板方式
+                val escaped = password.replace("'", "''")
+                val cmd = "ConvertTo-SecureString '${escaped}' -AsPlainText -Force | ConvertFrom-SecureString"
                 val process = ProcessBuilder("powershell.exe", "-NoProfile", "-Command", cmd).start()
                 if (process.waitFor() == 0) {
                     ep = String(process.inputStream.readAllBytes())
@@ -154,9 +184,11 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
             }
 
             // 如果获取加密密码失败，那么依然要走剪切板
-            if (ep.isBlank() || SystemInfo.isMacOS) {
+            // macOS 的 Windows App 不会读取 .rdp 里的密码，所以这里必然走剪贴板
+            if (ep.isBlank()) {
                 val systemClipboard = windowScope.window.toolkit.systemClipboard
                 systemClipboard.setContents(StringSelection(password), null)
+                passwordInClipboard = true
                 // clear password
                 swingCoroutineScope.launch(Dispatchers.IO) {
                     delay(30.seconds)
@@ -182,6 +214,7 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
 
         if (SystemInfo.isMacOS) {
             ProcessBuilder("open", file.absolutePath).start()
+            if (passwordInClipboard) tipClipboardPassword(windowScope)
         } else if (SystemInfo.isWindows) {
             val process = ProcessBuilder("mstsc", file.absolutePath).start()
             // mstsc 以 .rdp 文件名作为标题，且会在第一个 "." 处截断，
@@ -189,6 +222,162 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
             renameRemoteDesktopWindow(process.pid(), host.name.trim(), host.host.trim())
         }
 
+    }
+
+    /**
+     * 查找可用的 FreeRDP 客户端。
+     *
+     * 优先 SDL 客户端：macOS 下 sdl-freerdp 无需额外安装 XQuartz，而 xfreerdp 依赖 X11。
+     *
+     * 注意：从 Dock / Finder 启动的 GUI 程序继承到的 PATH 通常只有 /usr/bin:/bin:/usr/sbin:/sbin，
+     * 不包含 Homebrew 目录，所以这里显式补上常见的安装位置。
+     */
+    private fun findFreeRDP(): File? {
+        if (SystemInfo.isWindows) return null
+
+        val dirs = mutableListOf(
+            "/opt/homebrew/bin", // Homebrew on Apple Silicon
+            "/usr/local/bin",    // Homebrew on Intel / 手动安装
+            "/usr/bin",
+            "/bin",
+            "/snap/bin",         // Linux snap
+        )
+        System.getenv("PATH")?.split(File.pathSeparatorChar)?.let { dirs.addAll(it) }
+
+        for (name in listOf("sdl-freerdp3", "sdl-freerdp", "xfreerdp3", "xfreerdp")) {
+            for (dir in dirs) {
+                if (dir.isBlank()) continue
+                val file = File(dir, name)
+                if (file.isFile && file.canExecute()) return file
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * 使用 FreeRDP 连接，密码通过标准输入传递，实现免密登录。
+     *
+     * 不使用 /p:password 是因为命令行参数对同机器上的其他进程可见（ps 就能看到）。
+     *
+     * @return 是否成功启动，false 表示调用方需要回退到系统自带的客户端
+     */
+    private fun openWithFreeRDP(windowScope: WindowScope, host: Host, freerdp: File): Boolean {
+        val args = mutableListOf(freerdp.absolutePath)
+
+        // IPv6 地址需要用方括号包裹，才能和端口区分开
+        var address = host.host.trim()
+        if (address.contains(':') && !address.startsWith("[")) {
+            address = "[$address]"
+        }
+        args.add("/v:$address:${host.port}")
+
+        if (host.username.isNotBlank()) {
+            args.add("/u:${host.username}")
+        }
+
+        // 忽略证书校验，等价于 .rdp 的 authentication level:i:0，
+        // 否则自签名证书会导致连接中断并等待确认
+        args.add("/cert:ignore")
+        // 剪贴板重定向
+        args.add("+clipboard")
+        // 断线自动重连
+        args.add("/auto-reconnect")
+
+        val fullscreen = host.options.extras["fullscreen"]?.toBooleanStrictOrNull() ?: true
+        val resolution = host.options.extras["desktop"]?.lowercase()?.split("x")?.map { it.trim() } ?: emptyList()
+        if (resolution.size == 2 && resolution.all { it.toIntOrNull() != null }) {
+            args.add("/size:${resolution.first()}x${resolution.last()}")
+        } else {
+            // 未指定分辨率时跟随窗口动态调整
+            args.add("/dynamic-resolution")
+        }
+        if (fullscreen) {
+            args.add("/f")
+        }
+
+        val password = if (host.authentication.type == AuthenticationType.Password) {
+            host.authentication.password
+        } else {
+            StringUtils.EMPTY
+        }
+
+        // 从标准输入读取凭据
+        if (password.isNotEmpty()) {
+            args.add("/from-stdin")
+        }
+
+        return runCatching {
+            val process = ProcessBuilder(args).redirectErrorStream(true).start()
+            process.outputStream.use {
+                if (password.isNotEmpty()) {
+                    it.write("$password\n".toByteArray(Charsets.UTF_8))
+                }
+            }
+            watchFreeRDP(windowScope, process, freerdp.name)
+            true
+        }.onFailure {
+            if (log.isWarnEnabled) {
+                log.warn("Failed to start ${freerdp.absolutePath}: ${it.message}", it)
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 持续读取 FreeRDP 的输出（避免管道写满导致其阻塞），退出码非 0 时把最后几行提示给用户，
+     * 否则连接失败时界面上不会有任何反馈。
+     */
+    private fun watchFreeRDP(windowScope: WindowScope, process: Process, name: String) {
+        swingCoroutineScope.launch(Dispatchers.IO) {
+            val tail = ArrayDeque<String>()
+            runCatching {
+                process.inputStream.bufferedReader().use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        if (line.isBlank()) continue
+                        tail.addLast(line)
+                        // 只保留末尾若干行，避免长时间连接累积占用内存
+                        if (tail.size > 15) tail.removeFirst()
+                    }
+                }
+            }
+
+            val exitCode = runCatching { process.waitFor() }.getOrDefault(0)
+            if (exitCode == 0) return@launch
+
+            if (log.isWarnEnabled) {
+                log.warn("{} exited with code {}: {}", name, exitCode, tail.joinToString(" | "))
+            }
+
+            SwingUtilities.invokeLater {
+                OptionPane.showMessageDialog(
+                    windowScope.window,
+                    "$name exited with code $exitCode<br/><br/>"
+                            + tail.joinToString("<br/>") { StringEscapeUtils.escapeHtml4(it) },
+                    messageType = JOptionPane.ERROR_MESSAGE
+                )
+            }
+        }
+    }
+
+    /**
+     * macOS 的 Windows App 不支持从 .rdp 文件读取密码，只能把密码放到剪贴板让用户粘贴。
+     * 这个提示只显示一次，避免每次连接都打扰用户。
+     */
+    private fun tipClipboardPassword(windowScope: WindowScope) {
+        val properties = DatabaseManager.getInstance().properties
+        if (properties.getString(PROP_CLIPBOARD_TIPPED).toBoolean()) return
+        properties.putString(PROP_CLIPBOARD_TIPPED, true.toString())
+
+        OptionPane.showMessageDialog(
+            windowScope.window,
+            "The Windows App cannot read the password from a .rdp file, "
+                    + "so the saved password has been copied to the clipboard for 30 seconds. "
+                    + "Press <b>Cmd + V</b> in the password field.<br/><br/>"
+                    + "To sign in automatically without typing the password, install FreeRDP "
+                    + "and Termora will use it next time: <b>brew install freerdp</b>",
+            messageType = JOptionPane.INFORMATION_MESSAGE
+        )
     }
 
     /**
