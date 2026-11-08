@@ -85,7 +85,7 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
                 if (e.clickCount != 2 || !SwingUtilities.isLeftMouseButton(e)) return
                 val row = table.rowAtPoint(e.point)
                 if (row < 0) return
-                sendToTerminal(favorites[row])
+                sendToTerminal(favorites[row], close = true)
             }
 
             override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
@@ -180,9 +180,9 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
     }
 
     /**
-     * 将指令发送到当前终端
+     * 将指令发送到当前终端。双击发送后关闭收藏夹，右键菜单发送后保持打开。
      */
-    private fun sendToTerminal(favorite: Favorite) {
+    private fun sendToTerminal(favorite: Favorite, close: Boolean = false) {
         val writer = currentTerminalWriter()
         if (writer == null) {
             OptionPane.showMessageDialog(
@@ -192,9 +192,14 @@ class FavoriteDialog(owner: Window) : DialogWrapper(owner) {
             return
         }
         writer.write(TerminalWriter.WriteRequest.fromBytes(favorite.command.toByteArray(writer.getCharset())))
-        // 非模态窗口，发送后保持打开，便于连续发送；把焦点交回终端
-        currentTerminalPanel()?.let { panel ->
-            SwingUtilities.invokeLater { panel.requestFocusInWindow() }
+        val panel = currentTerminalPanel()
+        if (close) {
+            SwingUtilities.invokeLater {
+                dispose()
+                panel?.requestFocusInWindow()
+            }
+        } else {
+            panel?.let { SwingUtilities.invokeLater { it.requestFocusInWindow() } }
         }
     }
 
