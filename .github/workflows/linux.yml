@@ -42,6 +42,10 @@ jobs:
           EOF
           chmod +x docker-run.sh
 
+      - name: Fetch Gradle distribution
+        shell: bash
+        run: bash .github/scripts/fetch-gradle-dist.sh
+
       - name: Compile
         shell: bash
         run: ./docker-run.sh $DOCKER_NAME bash -c './gradlew :check-license && ./gradlew classes -x test'
