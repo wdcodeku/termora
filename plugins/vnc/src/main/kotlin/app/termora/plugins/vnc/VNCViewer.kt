@@ -106,6 +106,8 @@ class VNCViewer(private val host: Host) : JPanel(BorderLayout()), Disposable {
         val protocol = Protocol(transport, { host.authentication.password }, protocolSettings)
             .also { this.protocol = it }
         val surface = Surface(protocol, 1.0, LocalMouseCursorShape.NO_CURSOR).also { this.surface = it }
+        // 画面拥有焦点时，Termora 的窗口级快捷键转发给 VNC，而不是在本机执行
+        surface.putClientProperty(CaptureKeyboard.KEY, true)
 
         uiSettings.addListener(surface)
         protocolSettings.addListener(surface)
@@ -120,6 +122,7 @@ class VNCViewer(private val host: Host) : JPanel(BorderLayout()), Disposable {
 
         withContext(Dispatchers.Swing) {
             scrollPane.setViewportView(surface)
+            surface.requestFocusInWindow()
         }
     }
 
@@ -159,6 +162,12 @@ class VNCViewer(private val host: Host) : JPanel(BorderLayout()), Disposable {
         }
 
         fun initView() {
+            // 工具栏不抢焦点，否则点过按钮后快捷键又会回到本机
+            isFocusable = false
+            for (button in listOf(zoomInBtn, zoomOutBtn, actualZoomBtn, fitContentBtn, ctrlAltDelBtn)) {
+                button.isFocusable = false
+            }
+
             add(zoomInBtn)
             add(zoomOutBtn)
             add(actualZoomBtn)

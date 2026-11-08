@@ -123,6 +123,11 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
         sb.append("autoreconnection enabled:i:1").appendLine()
         // 剪贴板重定向
         sb.append("redirectclipboard:i:1").appendLine()
+        // 系统组合键（Alt+Tab、Win、Alt+Esc 等）始终发给远程计算机。
+        // mstsc 默认 keyboardhook:i:2，只在全屏时才发给远程，窗口模式下这些快捷键会被本机吃掉。
+        // 0=本机，1=远程，2=仅全屏。焦点离开远程桌面窗口后，本机快捷键恢复正常。
+        // Ctrl+Alt+Del 仍由本机接管，发到远程需要按 Ctrl+Alt+End。
+        sb.append("keyboardhook:i:1").appendLine()
         // 压缩与缓存，提升体验
         sb.append("compression:i:1").appendLine()
         sb.append("bitmapcachepersistenable:i:1").appendLine()
@@ -299,6 +304,8 @@ internal class RDPProtocolProvider private constructor() : GenericProtocolProvid
         args.add("/cert:ignore")
         // 剪贴板重定向
         args.add("+clipboard")
+        // 把 Alt+Tab、Win 等系统组合键发给远程。右 Ctrl 可临时释放键盘抓取。
+        args.add("+grab-keyboard")
         // 断线自动重连
         args.add("/auto-reconnect")
 

@@ -281,11 +281,19 @@ class TermoraFrame : JFrame(), DataProvider {
             private val keyboardFocusManager get() = KeyboardFocusManager.getCurrentKeyboardFocusManager()
             override fun actionPerformed(e: ActionEvent) {
                 var source = e.source
+                val focusOwner = keyboardFocusManager.focusOwner
                 if (source == rootPane) {
-                    val focusOwner = keyboardFocusManager.focusOwner
                     if (focusOwner is JComponent) {
                         source = focusOwner
                     }
+                }
+
+                // 远程桌面占用键盘时，本机快捷键（Ctrl+W、Ctrl+F、Ctrl+T 等）改发给远端
+                val current = EventQueue.getCurrentEvent()
+                val captureTarget = CaptureKeyboard.target(focusOwner)
+                if (captureTarget != null && current is KeyEvent) {
+                    CaptureKeyboard.forward(captureTarget, current)
+                    return
                 }
 
                 for (actionId in actionIds) {

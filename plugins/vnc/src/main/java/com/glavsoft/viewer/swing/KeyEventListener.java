@@ -109,9 +109,12 @@ public class KeyEventListener implements KeyListener {
 
 		int keyChar = e.getKeyChar();
 		final int location = e.getKeyLocation();
-		if (0xffff == keyChar) { keyChar = convertToAscii? convertor.convert(keyChar, e) : 0; }
+		final boolean undefined = keyChar == KeyEvent.CHAR_UNDEFINED;
+		if (undefined) {
+			keyChar = convertToAscii ? convertor.convert(keyChar, e) : 0;
+		}
 		if (keyChar < 0x20) {
-			if (e.isControlDown() && keyChar != e.getKeyCode()) {
+			if (!undefined && e.isControlDown() && keyChar != e.getKeyCode()) {
 				keyChar += 0x60; // to differ Ctrl-H from Ctrl-Backspace
 			} else {
 				switch (keyChar) {
@@ -121,9 +124,14 @@ public class KeyEventListener implements KeyListener {
 				case KeyEvent.VK_ENTER:
 					keyChar = KeyEvent.KEY_LOCATION_NUMPAD == location ? K_KP_ENTER : K_ENTER;
 					break;
-                default: break; //fall through
+				default:
+					// Alt/Ctrl 组合键经常没有字符（CHAR_UNDEFINED），按物理键补上 keysym
+					int fromCode = keyCodeToKeysym(e.getKeyCode(), location);
+					if (fromCode != 0) {
+						keyChar = fromCode;
+					}
+					break;
 				}
-
 			}
 		} else if (KeyEvent.VK_DELETE == keyChar) {
 			keyChar = K_DELETE;
@@ -133,7 +141,42 @@ public class KeyEventListener implements KeyListener {
 			keyChar = unicode2keysym(keyChar);
 		}
 
+		if (keyChar == 0) {
+			return;
+		}
 		sendKeyEvent(keyChar, e);
+	}
+
+	/**
+	 * 修饰键已经单独发送，这里只发未加 Shift 的物理键，交给远端去组合。
+	 */
+	private int keyCodeToKeysym(int keyCode, int location) {
+		if (keyCode >= KeyEvent.VK_A && keyCode <= KeyEvent.VK_Z) {
+			return Character.toLowerCase(keyCode);
+		}
+		if (keyCode >= KeyEvent.VK_0 && keyCode <= KeyEvent.VK_9) {
+			return keyCode;
+		}
+		switch (keyCode) {
+		case KeyEvent.VK_SPACE: return 0x20;
+		case KeyEvent.VK_TAB: return K_TAB;
+		case KeyEvent.VK_ENTER: return KeyEvent.KEY_LOCATION_NUMPAD == location ? K_KP_ENTER : K_ENTER;
+		case KeyEvent.VK_ESCAPE: return K_ESCAPE;
+		case KeyEvent.VK_BACK_SPACE: return K_BACK_SPACE;
+		case KeyEvent.VK_DELETE: return K_DELETE;
+		case KeyEvent.VK_MINUS: return '-';
+		case KeyEvent.VK_EQUALS: return '=';
+		case KeyEvent.VK_COMMA: return ',';
+		case KeyEvent.VK_PERIOD: return '.';
+		case KeyEvent.VK_SLASH: return '/';
+		case KeyEvent.VK_SEMICOLON: return ';';
+		case KeyEvent.VK_QUOTE: return '\'';
+		case KeyEvent.VK_OPEN_BRACKET: return '[';
+		case KeyEvent.VK_CLOSE_BRACKET: return ']';
+		case KeyEvent.VK_BACK_SLASH: return '\\';
+		case KeyEvent.VK_BACK_QUOTE: return '`';
+		default: return 0;
+		}
 	}
 
 
