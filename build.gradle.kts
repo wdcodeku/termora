@@ -57,6 +57,13 @@ fun execIgnoreExitValue(action: ExecSpec.() -> Unit) {
 
 allprojects {
     repositories {
+        // repo.maven.apache.org redirects some large files, including
+        // kotlin-compiler-embeddable, to GitHub Releases. Runners time out
+        // reading that host. This bucket stores the same Maven Central bytes.
+        maven {
+            name = "mavenCentralStorage"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+        }
         mavenCentral()
         maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
         maven("https://www.jitpack.io")
